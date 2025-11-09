@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code für lokale App</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+        }
+        h1 {
+            margin-bottom: 10px;
+            color: #333;
+            font-size: 24px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        #qrcode {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            display: inline-block;
+            margin: 20px 0;
+        }
+        .url-container {
+            margin-top: 30px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+        }
+        .url-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .url {
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            color: #667eea;
+            font-weight: bold;
+            word-break: break-all;
+        }
+        .instructions {
+            margin-top: 30px;
+            padding: 20px;
+            background: #fff3cd;
+            border-radius: 10px;
+            border-left: 4px solid #ffc107;
+            text-align: left;
+        }
+        .instructions h3 {
+            color: #856404;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        .instructions ol {
+            margin-left: 20px;
+            color: #856404;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .instructions li {
+            margin-bottom: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 QR Code für Handyansicht</h1>
+        <p class="subtitle">Scanne diesen Code mit deinem Handy</p>
+        <div id="qrcode"></div>
+        <div class="url-container">
+            <div class="url-label">URL:</div>
+            <div class="url" id="url-display">http://192.168.178.126:8080</div>
+        </div>
+        <div class="instructions">
+            <h3>📋 Anleitung:</h3>
+            <ol>
+                <li>Stelle sicher, dass der Dev-Server läuft: <code>npm run dev</code></li>
+                <li>Scanne den QR-Code mit deiner Handy-Kamera</li>
+                <li>Öffne den Link im Browser deines Handys</li>
+                <li>Beide Geräte müssen im gleichen WLAN sein</li>
+            </ol>
+        </div>
+    </div>
+    <script>
+        const url = "http://192.168.178.126:8080";
+        
+        new QRCode(document.getElementById("qrcode"), {
+            text: url,
+            width: 300,
+            height: 300,
+            colorDark: "#000000",
+            colorLight: "#ffffff",
+            correctLevel: QRCode.CorrectLevel.H
+        });
+        
+        // Fallback: Wenn QRCode nicht geladen wird, zeige URL
+        document.getElementById("url-display").textContent = url;
+    </script>
+</body>
+</html>

@@ -36,6 +36,7 @@ import {
   EventsData
 } from "@/lib/supabase-api";
 import { MapPin, Clock, Phone, Save, X, Plus, Loader2 } from "lucide-react";
+import { OptimizedImage } from "@/components/OptimizedImage";
 
 import heroImage from "@/assets/hero-spielothek.webp";
 import spielothek1 from "@/assets/spielothek-new-1.webp";
@@ -84,6 +85,88 @@ const Index = () => {
   });
   const [uploadingImages, setUploadingImages] = useState<Record<number, boolean>>({});
   const [uploadingFlyer, setUploadingFlyer] = useState<"flyer1" | "flyer2" | null>(null);
+  const [isAutoOptimizing, setIsAutoOptimizing] = useState(false);
+
+  // Preload nur das erste Getränkekarten-Bild für schnelleres Laden
+  // UND: Automatische Komprimierung wenn Bilder zu groß sind (nur im Hintergrund, nicht-blockierend)
+  useEffect(() => {
+    if (savedImages.length > 0 && !isAutoOptimizing) {
+      // Prüfe und komprimiere Bilder automatisch wenn nötig (im Hintergrund, nicht-blockierend)
+      const optimizeImages = async () => {
+        setIsAutoOptimizing(true);
+        
+        // Prüfe alle Bilder PARALLEL (nicht nacheinander)
+        const optimizationPromises = savedImages.map(async (imageUrl, i) => {
+          if (imageUrl && !imageUrl.includes('data:image')) {
+            try {
+              const optimizedUrl = await autoCompressExistingImage(imageUrl, i);
+              return optimizedUrl || imageUrl; // Verwende optimierte URL oder Original
+            } catch (error) {
+              console.error(`Fehler beim Optimieren von Bild ${i + 1}:`, error);
+              return imageUrl; // Bei Fehler: Verwende Original-URL
+            }
+          }
+          return imageUrl;
+        });
+        
+        // Warte auf alle Optimierungen parallel
+        const optimizedImages = await Promise.all(optimizationPromises);
+        
+        // Prüfe ob sich etwas geändert hat
+        const needsUpdate = optimizedImages.some((url, i) => url !== savedImages[i]);
+        
+        // Wenn Bilder komprimiert wurden, speichere die neuen URLs
+        if (needsUpdate) {
+          try {
+            await saveDrinksMenu(optimizedImages);
+            setSavedImages(optimizedImages);
+            setTempImages(optimizedImages);
+            console.log('✅ Alle Bilder wurden automatisch optimiert und gespeichert');
+          } catch (error) {
+            console.error('Fehler beim Speichern der optimierten Bilder:', error);
+          }
+        }
+        
+        setIsAutoOptimizing(false);
+      };
+      
+      // Starte Optimierung im Hintergrund (nicht-blockierend)
+      optimizeImages().catch(err => {
+        console.error('Fehler bei Hintergrund-Optimierung:', err);
+        setIsAutoOptimizing(false);
+      });
+      
+      // Preload NUR das erste Bild für schnelles initiales Laden
+      // Andere Bilder werden lazy geladen wenn sie benötigt werden
+      const links: HTMLLinkElement[] = [];
+      
+      if (savedImages[0]) {
+        const firstImageUrl = savedImages[0];
+        
+        // Preload-Link für erstes Bild
+        const link = document.createElement('link');
+        link.rel = 'preload';
+        link.as = 'image';
+        link.href = firstImageUrl;
+        link.setAttribute('fetchpriority', 'high');
+        document.head.appendChild(link);
+        links.push(link);
+        
+        // Auch als Image-Objekt preloaden für noch schnelleres Laden
+        const img = new Image();
+        img.src = firstImageUrl;
+      }
+      
+      return () => {
+        // Cleanup: Entferne Preload-Links beim Unmount
+        links.forEach(link => {
+          if (document.head.contains(link)) {
+            document.head.removeChild(link);
+          }
+        });
+      };
+    }
+  }, [savedImages, toast, isAutoOptimizing]);
 
   // Lade gespeicherte Daten beim Start (nicht-blockierend, lädt im Hintergrund)
   useEffect(() => {
@@ -108,9 +191,14 @@ const Index = () => {
         ]) as [string[], string | null, string | null, EventsData | null];
 
         // Setze die geladenen Daten
+        // Wenn Supabase Bilder hat, verwende diese, sonst verwende Default-Bilder
         if (drinks.length > 0) {
           setSavedImages(drinks);
           setTempImages(drinks);
+        } else {
+          // Wenn Supabase leer ist, verwende explizit die Default-Bilder
+          setSavedImages([drinksMenuFrontDefault, drinksMenuBackDefault]);
+          setTempImages([drinksMenuFrontDefault, drinksMenuBackDefault]);
         }
 
         if (flyer1) {
@@ -133,11 +221,9 @@ const Index = () => {
       }
     };
     
-    // Starte das Laden nach einem kurzen Delay, damit die Seite zuerst rendert
-    // Auf Mobile: Lade Daten erst nach 500ms, damit die Seite schneller erscheint
-    const delay = window.innerWidth < 768 ? 500 : 100;
-    const timer = setTimeout(loadData, delay);
-    return () => clearTimeout(timer);
+    // Starte das Laden sofort (kein Delay für Getränkekarten-Bilder)
+    // Die Bilder werden im Hintergrund geladen und blockieren nicht das Rendering
+    loadData();
   }, []);
 
   const handleGetränkekarteClick = (e: React.MouseEvent) => {
@@ -167,28 +253,36 @@ const Index = () => {
     }
   };
 
-  // Komprimiere Bild vor dem Upload (optimiert für schnelle Uploads)
+  // Komprimiere Bild vor dem Upload (optimiert für schnelles Laden - MAXIMALE KOMPRIMIERUNG)
   const compressImage = (file: File): Promise<File> => {
     return new Promise((resolve, reject) => {
-      // Wenn Bild bereits klein genug ist (< 300KB), überspringe Komprimierung
-      if (file.size < 300 * 1024) {
+      // Wenn Bild bereits sehr klein ist (< 150KB), überspringe Komprimierung
+      if (file.size < 150 * 1024) {
         resolve(file);
         return;
       }
 
-      // Dynamische Qualität und Größe basierend auf Dateigröße
-      let maxWidth = 1600;
-      let quality = 0.75;
+      // AGRESSIVE KOMPRIMIERUNG für schnelles Laden
+      // Für Menükarten/Getränkekarten: Maximal 1200px Breite ist völlig ausreichend
+      let maxWidth = 1200;
+      let quality = 0.65; // Reduzierte Qualität für kleinere Dateien
       
-      if (file.size > 5 * 1024 * 1024) {
-        // Sehr große Bilder (>5MB): aggressivere Komprimierung
-        maxWidth = 1200;
-        quality = 0.65;
-      } else if (file.size > 2 * 1024 * 1024) {
-        // Große Bilder (>2MB): moderate Komprimierung
-        maxWidth = 1400;
-        quality = 0.70;
+      if (file.size > 3 * 1024 * 1024) {
+        // Sehr große Bilder (>3MB): extrem aggressive Komprimierung
+        maxWidth = 900;
+        quality = 0.55;
+      } else if (file.size > 1.5 * 1024 * 1024) {
+        // Große Bilder (>1.5MB): sehr aggressive Komprimierung
+        maxWidth = 1000;
+        quality = 0.60;
+      } else if (file.size > 800 * 1024) {
+        // Mittlere Bilder (>800KB): aggressive Komprimierung
+        maxWidth = 1100;
+        quality = 0.63;
       }
+      
+      // Für Menükarten: Maximal 1200px ist mehr als genug für gute Lesbarkeit
+      // Qualität 65% ist ein guter Kompromiss zwischen Qualität und Dateigröße
 
       const reader = new FileReader();
       reader.readAsDataURL(file);
@@ -220,37 +314,77 @@ const Index = () => {
           ctx.drawImage(img, 0, 0, width, height);
           
           // Versuche WebP zuerst (bessere Kompression), fallback zu JPEG
-          const tryWebP = () => {
+          // WebP wird bevorzugt, da es bei gleicher Qualität deutlich kleinere Dateien erzeugt
+          const tryWebP = (currentQuality: number = quality, attempt: number = 1): void => {
             canvas.toBlob(
-              (blob) => {
-                if (blob && blob.size < file.size * 0.95) {
-                  // WebP ist kleiner, verwende es
-                  const compressedFile = new File([blob], file.name.replace(/\.[^.]+$/, '.webp'), {
-                    type: 'image/webp',
-                    lastModified: Date.now(),
-                  });
-                  resolve(compressedFile);
-                } else {
-                  // Fallback zu JPEG wenn WebP nicht unterstützt oder größer
+              (webpBlob) => {
+                if (webpBlob) {
+                  // Ziel: Bild sollte unter 400KB sein für schnelles Laden
+                  const targetSize = 400 * 1024; // 400KB
+                  
+                  if (webpBlob.size <= targetSize || webpBlob.size < file.size * 0.95) {
+                    // Bild ist klein genug!
+                    const compressedFile = new File([webpBlob], file.name.replace(/\.[^.]+$/, '.webp'), {
+                      type: 'image/webp',
+                      lastModified: Date.now(),
+                    });
+                    const reduction = ((1 - webpBlob.size / file.size) * 100).toFixed(1);
+                    console.log(`✓ WebP komprimiert: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(webpBlob.size / 1024 / 1024).toFixed(2)}MB (${reduction}% kleiner)`);
+                    resolve(compressedFile);
+                    return;
+                  } else if (attempt < 3 && currentQuality > 0.50) {
+                    // Bild ist noch zu groß, reduziere Qualität weiter
+                    const newQuality = Math.max(0.50, currentQuality - 0.05);
+                    console.log(`Bild noch zu groß (${(webpBlob.size / 1024 / 1024).toFixed(2)}MB), reduziere Qualität auf ${(newQuality * 100).toFixed(0)}%`);
+                    tryWebP(newQuality, attempt + 1);
+                    return;
+                  }
+                }
+                
+                // Fallback zu JPEG wenn WebP nicht unterstützt oder nicht klein genug
+                const tryJPEG = (jpegQuality: number = quality, jpegAttempt: number = 1): void => {
                   canvas.toBlob(
                     (jpegBlob) => {
                       if (!jpegBlob) {
                         reject(new Error('Bildkomprimierung fehlgeschlagen'));
                         return;
                       }
-                      const compressedFile = new File([jpegBlob], file.name, {
-                        type: 'image/jpeg',
-                        lastModified: Date.now(),
-                      });
-                      resolve(compressedFile);
+                      
+                      const targetSize = 400 * 1024; // 400KB
+                      if (jpegBlob.size <= targetSize || jpegBlob.size < file.size * 0.95) {
+                        // Bild ist klein genug!
+                        const compressedFile = new File([jpegBlob], file.name, {
+                          type: 'image/jpeg',
+                          lastModified: Date.now(),
+                        });
+                        const reduction = ((1 - jpegBlob.size / file.size) * 100).toFixed(1);
+                        console.log(`✓ JPEG komprimiert: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(jpegBlob.size / 1024 / 1024).toFixed(2)}MB (${reduction}% kleiner)`);
+                        resolve(compressedFile);
+                      } else if (jpegAttempt < 3 && jpegQuality > 0.50) {
+                        // Bild ist noch zu groß, reduziere Qualität weiter
+                        const newQuality = Math.max(0.50, jpegQuality - 0.05);
+                        console.log(`JPEG noch zu groß (${(jpegBlob.size / 1024 / 1024).toFixed(2)}MB), reduziere Qualität auf ${(newQuality * 100).toFixed(0)}%`);
+                        tryJPEG(newQuality, jpegAttempt + 1);
+                      } else {
+                        // Akzeptiere auch größere Dateien wenn weitere Reduktion nicht hilft
+                        const compressedFile = new File([jpegBlob], file.name, {
+                          type: 'image/jpeg',
+                          lastModified: Date.now(),
+                        });
+                        const reduction = ((1 - jpegBlob.size / file.size) * 100).toFixed(1);
+                        console.log(`✓ JPEG komprimiert: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(jpegBlob.size / 1024 / 1024).toFixed(2)}MB (${reduction}% kleiner)`);
+                        resolve(compressedFile);
+                      }
                     },
                     'image/jpeg',
-                    quality
+                    jpegQuality
                   );
-                }
+                };
+                
+                tryJPEG();
               },
               'image/webp',
-              quality
+              currentQuality
             );
           };
 
@@ -260,6 +394,47 @@ const Index = () => {
       };
       reader.onerror = reject;
     });
+  };
+
+  // Funktion: Komprimiere bereits hochgeladenes Bild automatisch
+  const autoCompressExistingImage = async (imageUrl: string, index: number): Promise<string | null> => {
+    try {
+      // Lade das Bild
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const sizeMB = blob.size / (1024 * 1024);
+      
+      // Wenn Bild bereits klein genug ist, nichts tun
+      if (sizeMB <= 0.4) {
+        console.log(`✓ Bild ${index + 1}: ${sizeMB.toFixed(2)}MB (bereits optimiert)`);
+        return null;
+      }
+      
+      console.log(`🔄 Bild ${index + 1} ist zu groß (${sizeMB.toFixed(2)}MB), komprimiere automatisch...`);
+      
+      // Konvertiere Blob zu File
+      const file = new File([blob], `image-${index}.jpg`, { type: blob.type });
+      
+      // Komprimiere das Bild
+      const compressedFile = await compressImage(file);
+      const compressedSizeMB = compressedFile.size / (1024 * 1024);
+      const reduction = ((1 - compressedFile.size / blob.size) * 100).toFixed(1);
+      
+      console.log(`✓ Bild ${index + 1} komprimiert: ${sizeMB.toFixed(2)}MB → ${compressedSizeMB.toFixed(2)}MB (${reduction}% kleiner)`);
+      
+      // Lade komprimiertes Bild hoch
+      const newImageUrl = await uploadImage(compressedFile, 'drinks');
+      
+      toast({
+        title: "Bild automatisch optimiert",
+        description: `Bild ${index + 1} wurde von ${sizeMB.toFixed(2)}MB auf ${compressedSizeMB.toFixed(2)}MB komprimiert.`,
+      });
+      
+      return newImageUrl;
+    } catch (error) {
+      console.error(`Fehler beim automatischen Komprimieren von Bild ${index + 1}:`, error);
+      return null;
+    }
   };
 
   const handleImageUpload = async (index: number, file: File) => {
@@ -964,12 +1139,14 @@ const Index = () => {
                         <CarouselContent>
                           {savedImages.map((image, index) => (
                             <CarouselItem key={index}>
-                              <img 
-                                src={image} 
-                                alt={`Basement Bar Getränkekarte ${index + 1}`} 
-                                className="w-full rounded-lg shadow-lg max-h-[70vh] object-contain" 
-                                loading="lazy"
-                                decoding="async"
+                              <OptimizedImage
+                                src={image}
+                                alt={`Basement Bar Getränkekarte ${index + 1}`}
+                                className="w-full rounded-lg shadow-lg max-h-[70vh] object-contain"
+                                priority={index === 0} // Nur erstes Bild mit hoher Priorität
+                                onError={() => {
+                                  console.error(`Fehler beim Laden von Bild ${index + 1}:`, image);
+                                }}
                               />
                             </CarouselItem>
                           ))}
