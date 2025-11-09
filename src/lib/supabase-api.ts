@@ -88,24 +88,40 @@ export const saveDrinksMenu = async (images: string[]): Promise<void> => {
     return;
   }
 
-  // Check if record exists
-  const { data: existing } = await supabase
-    .from('drinks_menu')
-    .select('id')
-    .limit(1)
-    .single();
+  try {
+    // Check if record exists
+    const { data: existing, error: selectError } = await supabase
+      .from('drinks_menu')
+      .select('id')
+      .limit(1)
+      .maybeSingle();
 
-  if (existing) {
-    const { error } = await supabase
-      .from('drinks_menu')
-      .update({ images, updated_at: new Date().toISOString() })
-      .eq('id', existing.id);
-    if (error) throw error;
-  } else {
-    const { error } = await supabase
-      .from('drinks_menu')
-      .insert({ images });
-    if (error) throw error;
+    if (selectError && selectError.code !== 'PGRST116') {
+      console.error('Fehler beim Prüfen der Getränkekarte:', selectError);
+      throw selectError;
+    }
+
+    if (existing) {
+      const { error } = await supabase
+        .from('drinks_menu')
+        .update({ images, updated_at: new Date().toISOString() })
+        .eq('id', existing.id);
+      if (error) {
+        console.error('Fehler beim Aktualisieren der Getränkekarte:', error);
+        throw error;
+      }
+    } else {
+      const { error } = await supabase
+        .from('drinks_menu')
+        .insert({ images });
+      if (error) {
+        console.error('Fehler beim Einfügen der Getränkekarte:', error);
+        throw error;
+      }
+    }
+  } catch (error: any) {
+    console.error('Fehler in saveDrinksMenu:', error);
+    throw error;
   }
 };
 
@@ -141,17 +157,25 @@ export const saveFlyer = async (flyerNumber: 1 | 2, imageUrl: string): Promise<v
     return;
   }
 
-  const { error } = await supabase
-    .from('flyers')
-    .upsert({
-      flyer_number: flyerNumber,
-      image_url: imageUrl,
-      updated_at: new Date().toISOString()
-    }, {
-      onConflict: 'flyer_number'
-    });
+  try {
+    const { error } = await supabase
+      .from('flyers')
+      .upsert({
+        flyer_number: flyerNumber,
+        image_url: imageUrl,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'flyer_number'
+      });
 
-  if (error) throw error;
+    if (error) {
+      console.error('Fehler beim Speichern des Flyers:', error);
+      throw error;
+    }
+  } catch (error: any) {
+    console.error('Fehler in saveFlyer:', error);
+    throw error;
+  }
 };
 
 // ============================================
@@ -225,16 +249,33 @@ export const uploadImage = async (file: File, category: 'drinks' | 'flyers' | 'o
   // Try Supabase Storage first
   if (supabase) {
     try {
-      return await uploadImageToSupabase(file, category);
-    } catch (error) {
-      console.error('Supabase upload failed, falling back to base64:', error);
+      const url = await uploadImageToSupabase(file, category);
+      console.log('Bild erfolgreich zu Supabase hochgeladen:', url);
+      return url;
+    } catch (error: any) {
+      console.error('Supabase upload failed:', error);
+      // Wenn Supabase nicht verfügbar ist, auf Base64 zurückfallen
+      // Aber nur wenn es kein Policy-Fehler ist
+      if (error?.message?.includes('policy') || error?.message?.includes('permission')) {
+        throw new Error('Keine Berechtigung zum Hochladen. Bitte Supabase Storage Policies überprüfen.');
+      }
+      // Für andere Fehler auch Base64 verwenden
+      console.warn('Falle auf Base64 zurück:', error?.message);
     }
   }
 
-  // Fallback: Convert to base64
+  // Fallback: Convert to base64 (nur wenn Supabase nicht verfügbar oder Fehler)
+  console.log('Verwende Base64 für Bild:', file.name);
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
+    reader.onloadend = () => {
+      const base64 = reader.result as string;
+      // Warnung wenn Base64 zu groß ist (> 1MB)
+      if (base64.length > 1000000) {
+        console.warn('Base64-Bild ist sehr groß:', (base64.length / 1024 / 1024).toFixed(2), 'MB');
+      }
+      resolve(base64);
+    };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });

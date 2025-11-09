@@ -35,25 +35,25 @@ import {
   uploadImage,
   EventsData
 } from "@/lib/supabase-api";
-import { MapPin, Clock, Phone, Save, X, Plus } from "lucide-react";
+import { MapPin, Clock, Phone, Save, X, Plus, Loader2 } from "lucide-react";
 
-import heroImage from "@/assets/hero-spielothek.png";
-import spielothek1 from "@/assets/spielothek-new-1.png";
-import spielothek2 from "@/assets/spielothek-new-2.png";
-import spielothek3 from "@/assets/spielothek-new-3.png";
+import heroImage from "@/assets/hero-spielothek.webp";
+import spielothek1 from "@/assets/spielothek-new-1.webp";
+import spielothek2 from "@/assets/spielothek-new-2.webp";
+import spielothek3 from "@/assets/spielothek-new-3.webp";
 import drinksMenu from "@/assets/drinks-menu.jpg";
 import drinksMenuFrontDefault from "@/assets/drinks-menu-front-new.jpg";
 import drinksMenuBackDefault from "@/assets/drinks-menu-back.jpg";
-import bar1 from "@/assets/bar-new-1.png";
-import bar2 from "@/assets/bar-new-2.png";
-import bar3 from "@/assets/bar-new-3.png";
-import bar4 from "@/assets/bar-new-4.png";
-import automaten1 from "@/assets/automaten-new-1.png";
-import automaten2 from "@/assets/automaten-new-2.png";
-import automaten3 from "@/assets/automaten-new-3.png";
-import automaten4 from "@/assets/automaten-new-4.png";
+import bar1 from "@/assets/bar-new-1.webp";
+import bar2 from "@/assets/bar-new-2.webp";
+import bar3 from "@/assets/bar-new-3.webp";
+import bar4 from "@/assets/bar-new-4.webp";
+import automaten1 from "@/assets/automaten-new-1.webp";
+import automaten2 from "@/assets/automaten-new-2.webp";
+import automaten3 from "@/assets/automaten-new-3.webp";
+import automaten4 from "@/assets/automaten-new-4.webp";
 import oktayPhoto from "@/assets/oktay-kahyalar.jpg";
-import basementBarLogo from "@/assets/basement-bar-logo.png";
+import basementBarLogo from "@/assets/basement-bar-logo.webp";
 
 const ADMIN_PASSWORD = "2673";
 const MAX_IMAGES = 3;
@@ -82,42 +82,62 @@ const Index = () => {
     title: "Veranstaltungen/Angebote",
     items: ["Happy Hour täglich", "Live-Musik am Wochenende"]
   });
+  const [uploadingImages, setUploadingImages] = useState<Record<number, boolean>>({});
+  const [uploadingFlyer, setUploadingFlyer] = useState<"flyer1" | "flyer2" | null>(null);
 
-  // Lade gespeicherte Daten beim Start
+  // Lade gespeicherte Daten beim Start (nicht-blockierend, lädt im Hintergrund)
   useEffect(() => {
+    // Lade Daten asynchron im Hintergrund, blockiert nicht das initiale Rendering
     const loadData = async () => {
       try {
-        // Lade Getränkekarte
-        const drinks = await getDrinksMenu();
+        // Timeout für Supabase-Calls, damit die Seite nicht ewig wartet
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 3000)
+        );
+
+        const dataPromise = Promise.all([
+          getDrinksMenu(),
+          getFlyer(1),
+          getFlyer(2),
+          getEvents()
+        ]);
+
+        const [drinks, flyer1, flyer2, events] = await Promise.race([
+          dataPromise,
+          timeoutPromise
+        ]) as [string[], string | null, string | null, EventsData | null];
+
+        // Setze die geladenen Daten
         if (drinks.length > 0) {
           setSavedImages(drinks);
           setTempImages(drinks);
         }
 
-        // Lade Flyer
-        const flyer1 = await getFlyer(1);
         if (flyer1) {
           setSavedFlyer1(flyer1);
           setTempFlyer1(flyer1);
         }
 
-        const flyer2 = await getFlyer(2);
         if (flyer2) {
           setSavedFlyer2(flyer2);
           setTempFlyer2(flyer2);
         }
 
-        // Lade Veranstaltungen/Angebote
-        const events = await getEvents();
         if (events) {
           setSavedEvents(events);
           setTempEvents(events);
         }
       } catch (e) {
-        console.error("Fehler beim Laden der Daten", e);
+        // Bei Fehler oder Timeout: Verwende Default-Werte, Seite bleibt funktionsfähig
+        console.warn("Daten konnten nicht geladen werden, verwende Standard-Werte", e);
       }
     };
-    loadData();
+    
+    // Starte das Laden nach einem kurzen Delay, damit die Seite zuerst rendert
+    // Auf Mobile: Lade Daten erst nach 500ms, damit die Seite schneller erscheint
+    const delay = window.innerWidth < 768 ? 500 : 100;
+    const timer = setTimeout(loadData, delay);
+    return () => clearTimeout(timer);
   }, []);
 
   const handleGetränkekarteClick = (e: React.MouseEvent) => {
@@ -147,22 +167,139 @@ const Index = () => {
     }
   };
 
+  // Komprimiere Bild vor dem Upload (optimiert für schnelle Uploads)
+  const compressImage = (file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      // Wenn Bild bereits klein genug ist (< 300KB), überspringe Komprimierung
+      if (file.size < 300 * 1024) {
+        resolve(file);
+        return;
+      }
+
+      // Dynamische Qualität und Größe basierend auf Dateigröße
+      let maxWidth = 1600;
+      let quality = 0.75;
+      
+      if (file.size > 5 * 1024 * 1024) {
+        // Sehr große Bilder (>5MB): aggressivere Komprimierung
+        maxWidth = 1200;
+        quality = 0.65;
+      } else if (file.size > 2 * 1024 * 1024) {
+        // Große Bilder (>2MB): moderate Komprimierung
+        maxWidth = 1400;
+        quality = 0.70;
+      }
+
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          // Skaliere Bild wenn zu groß
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            reject(new Error('Canvas context nicht verfügbar'));
+            return;
+          }
+
+          // Optimierte Bildqualität für schnelleres Rendering
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // Versuche WebP zuerst (bessere Kompression), fallback zu JPEG
+          const tryWebP = () => {
+            canvas.toBlob(
+              (blob) => {
+                if (blob && blob.size < file.size * 0.95) {
+                  // WebP ist kleiner, verwende es
+                  const compressedFile = new File([blob], file.name.replace(/\.[^.]+$/, '.webp'), {
+                    type: 'image/webp',
+                    lastModified: Date.now(),
+                  });
+                  resolve(compressedFile);
+                } else {
+                  // Fallback zu JPEG wenn WebP nicht unterstützt oder größer
+                  canvas.toBlob(
+                    (jpegBlob) => {
+                      if (!jpegBlob) {
+                        reject(new Error('Bildkomprimierung fehlgeschlagen'));
+                        return;
+                      }
+                      const compressedFile = new File([jpegBlob], file.name, {
+                        type: 'image/jpeg',
+                        lastModified: Date.now(),
+                      });
+                      resolve(compressedFile);
+                    },
+                    'image/jpeg',
+                    quality
+                  );
+                }
+              },
+              'image/webp',
+              quality
+            );
+          };
+
+          tryWebP();
+        };
+        img.onerror = reject;
+      };
+      reader.onerror = reject;
+    });
+  };
+
   const handleImageUpload = async (index: number, file: File) => {
+    setUploadingImages(prev => ({ ...prev, [index]: true }));
+    const startTime = performance.now();
+    
     try {
-      const imageUrl = await uploadImage(file, 'drinks');
+      // Komprimiere Bild zuerst (parallel mit Upload-Vorbereitung)
+      const compressedFile = await compressImage(file);
+      const compressionTime = performance.now() - startTime;
+      const sizeReduction = ((1 - compressedFile.size / file.size) * 100).toFixed(1);
+      console.log(`Bild komprimiert: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(2)}MB (${sizeReduction}% kleiner) in ${compressionTime.toFixed(0)}ms`);
+      
+      // Upload starten (nicht-blockierend)
+      const uploadStartTime = performance.now();
+      const imageUrl = await uploadImage(compressedFile, 'drinks');
+      const uploadTime = performance.now() - uploadStartTime;
+      console.log(`Upload abgeschlossen in ${uploadTime.toFixed(0)}ms`);
+      
       const newImages = [...tempImages];
       newImages[index] = imageUrl;
       setTempImages(newImages);
       
+      const totalTime = performance.now() - startTime;
       toast({
         title: "Bild geladen",
-        description: `Bild ${index + 1} wurde geladen (noch nicht gespeichert).`,
+        description: `Bild ${index + 1} wurde geladen (${totalTime.toFixed(0)}ms).`,
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Fehler beim Hochladen des Bildes:", error);
       toast({
         title: "Fehler",
-        description: "Fehler beim Hochladen des Bildes.",
+        description: error?.message || "Fehler beim Hochladen des Bildes.",
         variant: "destructive",
+      });
+    } finally {
+      setUploadingImages(prev => {
+        const newState = { ...prev };
+        delete newState[index];
+        return newState;
       });
     }
   };
@@ -199,10 +336,11 @@ const Index = () => {
           ? "Getränkekarte wurde gespeichert." 
           : "Alle Bilder wurden entfernt.",
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Fehler beim Speichern der Getränkekarte:", error);
       toast({
         title: "Fehler",
-        description: "Fehler beim Speichern. Bitte versuchen Sie es erneut.",
+        description: error?.message || "Fehler beim Speichern. Bitte versuchen Sie es erneut.",
         variant: "destructive",
       });
     }
@@ -260,23 +398,42 @@ const Index = () => {
   };
 
   const handleFlyerUpload = async (file: File) => {
+    if (!editingFlyer) return;
+    setUploadingFlyer(editingFlyer);
+    const startTime = performance.now();
+    
     try {
-      const imageUrl = await uploadImage(file, 'flyers');
+      // Komprimiere Bild zuerst
+      const compressedFile = await compressImage(file);
+      const compressionTime = performance.now() - startTime;
+      const sizeReduction = ((1 - compressedFile.size / file.size) * 100).toFixed(1);
+      console.log(`Flyer komprimiert: ${(file.size / 1024 / 1024).toFixed(2)}MB → ${(compressedFile.size / 1024 / 1024).toFixed(2)}MB (${sizeReduction}% kleiner) in ${compressionTime.toFixed(0)}ms`);
+      
+      const uploadStartTime = performance.now();
+      const imageUrl = await uploadImage(compressedFile, 'flyers');
+      const uploadTime = performance.now() - uploadStartTime;
+      console.log(`Upload abgeschlossen in ${uploadTime.toFixed(0)}ms`);
+      
       if (editingFlyer === "flyer1") {
         setTempFlyer1(imageUrl);
       } else {
         setTempFlyer2(imageUrl);
       }
+      
+      const totalTime = performance.now() - startTime;
       toast({
         title: "Bild geladen",
-        description: "Bild wurde geladen (noch nicht gespeichert).",
+        description: `Bild wurde geladen (${totalTime.toFixed(0)}ms).`,
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Fehler beim Hochladen des Flyers:", error);
       toast({
         title: "Fehler",
-        description: "Fehler beim Hochladen des Bildes.",
+        description: error?.message || "Fehler beim Hochladen des Bildes.",
         variant: "destructive",
       });
+    } finally {
+      setUploadingFlyer(null);
     }
   };
 
@@ -309,10 +466,11 @@ const Index = () => {
           ? "Flyer wurde gespeichert." 
           : "Flyer wurde entfernt.",
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Fehler beim Speichern des Flyers:", error);
       toast({
         title: "Fehler",
-        description: "Fehler beim Speichern.",
+        description: error?.message || "Fehler beim Speichern.",
         variant: "destructive",
       });
     }
@@ -452,45 +610,68 @@ const Index = () => {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <header className="bg-card border-b border-border py-8 px-4 shadow-[var(--shadow-glow)]">
+      <header className="bg-card border-b border-border py-4 md:py-8 px-4 shadow-[var(--shadow-glow)]">
         <div className="container mx-auto">
-          <nav className="flex items-center gap-3 mb-4">
-            <div className="h-10 w-10 border-2 border-accent rounded-full overflow-hidden bg-card flex items-center justify-center">
-              <img src={basementBarLogo} alt="Basement Bar Logo" className="h-full w-full object-cover" />
+          <nav className="flex items-center justify-between gap-3 mb-3 md:mb-4">
+            <div className="flex items-center gap-3">
+              <div className="h-8 w-8 md:h-10 md:w-10 border-2 border-accent rounded-full overflow-hidden bg-card flex items-center justify-center">
+                <img src={basementBarLogo} alt="Basement Bar Logo" className="h-full w-full object-cover" loading="lazy" />
+              </div>
+              <Link to="/karriere" className="text-sm md:text-base text-foreground hover:text-primary font-medium transition-colors">
+                Karriere
+              </Link>
             </div>
-            <Link to="/karriere" className="text-foreground hover:text-primary font-medium transition-colors">
-              Karriere
-            </Link>
+            {/* Profilbild und Name auf Mobile rechts oben */}
+            <div className="flex md:hidden flex-row items-center gap-2">
+              <Avatar className="h-10 w-10 border-2 border-accent flex-shrink-0">
+                <AvatarImage src={oktayPhoto} alt="Oktay Kahyalar" />
+                <AvatarFallback className="bg-primary text-primary-foreground text-sm font-semibold">OK</AvatarFallback>
+              </Avatar>
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground">Geschäftsführer:</p>
+                <p className="text-xs font-semibold whitespace-nowrap">Oktay Kahyalar</p>
+              </div>
+            </div>
           </nav>
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <h1 className="text-4xl md:text-5xl font-bold text-center bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                Spielothek, Entertainment & Gastronomie
-              </h1>
-              <p className="text-center text-muted-foreground mt-2">
-                Ihre Anlaufstelle für Unterhaltung, Gastronomie & Drinks
-              </p>
+          <div className="relative flex flex-col md:flex-row items-center justify-between gap-3 md:gap-4">
+            {/* Platzhalter für Desktop, damit Titel zentriert wird */}
+            <div className="hidden md:block w-32"></div>
+            
+            <div className="flex-1 w-full md:w-auto">
+              <div className="text-center">
+                <h1 className="text-xl md:text-5xl font-bold text-center bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent leading-tight">
+                  Spielothek, Entertainment & Gastronomie
+                </h1>
+                <p className="text-center text-muted-foreground mt-1 md:mt-2 text-xs md:text-base">
+                  Ihre Anlaufstelle für Unterhaltung, Gastronomie & Drinks
+                </p>
+              </div>
             </div>
-          <div className="flex flex-col items-center gap-2 ml-8">
-            <Avatar className="h-20 w-20 border-2 border-accent">
-              <AvatarImage src={oktayPhoto} alt="Oktay Kahyalar" />
-              <AvatarFallback className="bg-primary text-primary-foreground text-2xl font-semibold">OK</AvatarFallback>
-            </Avatar>
-            <div className="text-center">
-              <p className="text-xs text-muted-foreground">Geschäftsführer:</p>
-              <p className="text-sm font-semibold">Oktay Kahyalar</p>
-            </div>
+            
+            {/* Profilbild und Name auf Desktop rechts */}
+            <div className="hidden md:flex flex-col items-center gap-2 w-32">
+              <Avatar className="h-20 w-20 border-2 border-accent flex-shrink-0">
+                <AvatarImage src={oktayPhoto} alt="Oktay Kahyalar" />
+                <AvatarFallback className="bg-primary text-primary-foreground text-2xl font-semibold">OK</AvatarFallback>
+              </Avatar>
+              <div className="text-center">
+                <p className="text-xs text-muted-foreground">Geschäftsführer:</p>
+                <p className="text-sm font-semibold whitespace-nowrap">Oktay Kahyalar</p>
+              </div>
             </div>
           </div>
         </div>
       </header>
 
       {/* Hero Section */}
-      <div className="relative h-[400px] md:h-[500px] overflow-hidden">
+      <div className="relative h-[200px] md:h-[500px] overflow-hidden">
         <img 
           src={heroImage} 
           alt="Spielothek Spieltreff" 
           className="w-full h-full object-cover"
+          loading="eager"
+          fetchPriority="high"
+          decoding="async"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-black/40 to-black/60" />
       </div>
@@ -505,7 +686,7 @@ const Index = () => {
             </AccordionTrigger>
             <AccordionContent className="px-6 pb-6">
               <div className="space-y-6">
-                <div className="grid md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="flex items-start gap-3 bg-secondary p-4 rounded-lg">
                     <Clock className="w-5 h-5 text-accent mt-1 flex-shrink-0" />
                     <div>
@@ -532,9 +713,9 @@ const Index = () => {
                 </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <img src={spielothek1} alt="Spielothek Spieltreff Interior 1" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
-                  <img src={spielothek2} alt="Spielothek Spieltreff Interior 2" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
-                  <img src={spielothek3} alt="Spielothek Spieltreff Interior 3" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
+                  <img src={spielothek1} alt="Spielothek Spieltreff Interior 1" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
+                  <img src={spielothek2} alt="Spielothek Spieltreff Interior 2" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
+                  <img src={spielothek3} alt="Spielothek Spieltreff Interior 3" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
                 </div>
               </div>
             </AccordionContent>
@@ -547,7 +728,7 @@ const Index = () => {
             </AccordionTrigger>
             <AccordionContent className="px-6 pb-6">
               <div className="space-y-6">
-                <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="flex items-start gap-3 bg-secondary p-4 rounded-lg">
                     <Clock className="w-5 h-5 text-accent mt-1 flex-shrink-0" />
                     <div>
@@ -638,17 +819,18 @@ const Index = () => {
                   </div>
                 </div>
 
-                <div className="grid md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="flex items-center justify-center">
                     {isFlyerEditMode && editingFlyer === "flyer1" ? (
                       <div className="w-full space-y-4">
                         {tempFlyer1 && (
                           <div className="relative">
-                            <img 
-                              src={tempFlyer1} 
-                              alt="Flyer 1" 
-                              className="w-full rounded-lg shadow-lg mb-2 max-h-96 object-contain"
-                            />
+                          <img 
+                            src={tempFlyer1} 
+                            alt="Flyer 1" 
+                            className="w-full rounded-lg shadow-lg mb-2 max-h-96 object-contain"
+                            decoding="async"
+                          />
                             <Button
                               variant="destructive"
                               size="sm"
@@ -660,20 +842,28 @@ const Index = () => {
                             </Button>
                           </div>
                         )}
-                        <Input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleFlyerUpload(file);
-                          }}
-                        />
+                        {uploadingFlyer === "flyer1" ? (
+                          <div className="flex items-center justify-center gap-2 p-4 border-2 border-dashed rounded-lg">
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                            <span className="text-sm text-muted-foreground">Bild wird komprimiert und hochgeladen...</span>
+                          </div>
+                        ) : (
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleFlyerUpload(file);
+                            }}
+                            disabled={!!uploadingFlyer}
+                          />
+                        )}
                         <div className="flex gap-2">
-                          <Button onClick={handleSaveFlyer} className="flex-1">
+                          <Button onClick={handleSaveFlyer} className="flex-1" disabled={!!uploadingFlyer}>
                             <Save className="mr-2 h-4 w-4" />
                             Speichern
                           </Button>
-                          <Button variant="outline" onClick={cancelFlyerEdit}>
+                          <Button variant="outline" onClick={cancelFlyerEdit} disabled={!!uploadingFlyer}>
                             <X className="mr-2 h-4 w-4" />
                             Abbrechen
                           </Button>
@@ -681,7 +871,7 @@ const Index = () => {
                       </div>
                     ) : (
                       <div 
-                        className="bg-secondary/50 border-2 border-dashed border-border rounded-lg h-64 w-full flex items-center justify-center cursor-pointer"
+                        className="bg-secondary/50 border-2 border-dashed border-border rounded-lg h-48 md:h-64 w-full flex items-center justify-center cursor-pointer"
                         onClick={() => handleFlyerClick("flyer1")}
                       >
                         {savedFlyer1 ? (
@@ -689,6 +879,8 @@ const Index = () => {
                             src={savedFlyer1} 
                             alt="Flyer 1" 
                             className="w-full h-full object-contain rounded-lg"
+                            loading="lazy"
+                            decoding="async"
                           />
                         ) : null}
                       </div>
@@ -722,16 +914,25 @@ const Index = () => {
                                 src={image} 
                                 alt={`Getränkekarte ${index + 1}`} 
                                 className="w-full rounded-lg shadow-lg mb-2 max-h-96 object-contain"
+                                decoding="async"
                               />
                             )}
-                            <Input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) handleImageUpload(index, file);
-                              }}
-                            />
+                            {uploadingImages[index] ? (
+                              <div className="flex items-center justify-center gap-2 p-4 border-2 border-dashed rounded-lg">
+                                <Loader2 className="h-5 w-5 animate-spin" />
+                                <span className="text-sm text-muted-foreground">Bild wird komprimiert und hochgeladen...</span>
+                              </div>
+                            ) : (
+                              <Input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) handleImageUpload(index, file);
+                                }}
+                                disabled={uploadingImages[index]}
+                              />
+                            )}
                           </div>
                         ))}
                         {tempImages.length < MAX_IMAGES && (
@@ -766,7 +967,9 @@ const Index = () => {
                               <img 
                                 src={image} 
                                 alt={`Basement Bar Getränkekarte ${index + 1}`} 
-                                className="w-full rounded-lg shadow-lg" 
+                                className="w-full rounded-lg shadow-lg max-h-[70vh] object-contain" 
+                                loading="lazy"
+                                decoding="async"
                               />
                             </CarouselItem>
                           ))}
@@ -781,11 +984,12 @@ const Index = () => {
                       <div className="w-full space-y-4">
                         {tempFlyer2 && (
                           <div className="relative">
-                            <img 
-                              src={tempFlyer2} 
-                              alt="Flyer 2" 
-                              className="w-full rounded-lg shadow-lg mb-2 max-h-96 object-contain"
-                            />
+                          <img 
+                            src={tempFlyer2} 
+                            alt="Flyer 2" 
+                            className="w-full rounded-lg shadow-lg mb-2 max-h-96 object-contain"
+                            decoding="async"
+                          />
                             <Button
                               variant="destructive"
                               size="sm"
@@ -797,20 +1001,28 @@ const Index = () => {
                             </Button>
                           </div>
                         )}
-                        <Input
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleFlyerUpload(file);
-                          }}
-                        />
+                        {uploadingFlyer === "flyer2" ? (
+                          <div className="flex items-center justify-center gap-2 p-4 border-2 border-dashed rounded-lg">
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                            <span className="text-sm text-muted-foreground">Bild wird komprimiert und hochgeladen...</span>
+                          </div>
+                        ) : (
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleFlyerUpload(file);
+                            }}
+                            disabled={!!uploadingFlyer}
+                          />
+                        )}
                         <div className="flex gap-2">
-                          <Button onClick={handleSaveFlyer} className="flex-1">
+                          <Button onClick={handleSaveFlyer} className="flex-1" disabled={!!uploadingFlyer}>
                             <Save className="mr-2 h-4 w-4" />
                             Speichern
                           </Button>
-                          <Button variant="outline" onClick={cancelFlyerEdit}>
+                          <Button variant="outline" onClick={cancelFlyerEdit} disabled={!!uploadingFlyer}>
                             <X className="mr-2 h-4 w-4" />
                             Abbrechen
                           </Button>
@@ -818,7 +1030,7 @@ const Index = () => {
                       </div>
                     ) : (
                       <div 
-                        className="bg-secondary/50 border-2 border-dashed border-border rounded-lg h-64 w-full flex items-center justify-center cursor-pointer"
+                        className="bg-secondary/50 border-2 border-dashed border-border rounded-lg h-48 md:h-64 w-full flex items-center justify-center cursor-pointer"
                         onClick={() => handleFlyerClick("flyer2")}
                       >
                         {savedFlyer2 ? (
@@ -826,6 +1038,8 @@ const Index = () => {
                             src={savedFlyer2} 
                             alt="Flyer 2" 
                             className="w-full h-full object-contain rounded-lg"
+                            loading="lazy"
+                            decoding="async"
                           />
                         ) : null}
                       </div>
@@ -835,11 +1049,11 @@ const Index = () => {
                 
                 <div>
                   <h3 className="font-semibold mb-3 text-lg">Galerie</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <img src={bar1} alt="Basement Bar Interior 1" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
-                  <img src={bar2} alt="Basement Bar Interior 2" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
-                  <img src={bar3} alt="Basement Bar Interior 3" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
-                  <img src={bar4} alt="Basement Bar Interior 4" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
+                  <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <img src={bar1} alt="Basement Bar Interior 1" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
+                  <img src={bar2} alt="Basement Bar Interior 2" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
+                  <img src={bar3} alt="Basement Bar Interior 3" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
+                  <img src={bar4} alt="Basement Bar Interior 4" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
                   </div>
                 </div>
               </div>
@@ -853,7 +1067,7 @@ const Index = () => {
             </AccordionTrigger>
             <AccordionContent className="px-6 pb-6">
               <div className="space-y-6">
-                <div className="grid md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="flex items-start gap-3 bg-secondary p-4 rounded-lg">
                     <MapPin className="w-5 h-5 text-accent mt-1 flex-shrink-0" />
                     <div>
@@ -889,10 +1103,10 @@ const Index = () => {
                 </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <img src={automaten1} alt="O.K Automaten Interior 1" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
-                  <img src={automaten2} alt="O.K Automaten Interior 2" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
-                  <img src={automaten3} alt="O.K Automaten Interior 3" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
-                  <img src={automaten4} alt="O.K Automaten Interior 4" className="w-full h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" />
+                  <img src={automaten1} alt="O.K Automaten Interior 1" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
+                  <img src={automaten2} alt="O.K Automaten Interior 2" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
+                  <img src={automaten3} alt="O.K Automaten Interior 3" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
+                  <img src={automaten4} alt="O.K Automaten Interior 4" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
                 </div>
               </div>
             </AccordionContent>
@@ -904,9 +1118,9 @@ const Index = () => {
       <footer className="bg-card border-t border-border py-8 px-4 mt-12">
         <div className="container mx-auto text-center">
           <div className="flex justify-center gap-6 text-sm text-muted-foreground">
-            <span>Impressum</span>
+            <Link to="/impressum" className="hover:text-primary transition-colors">Impressum</Link>
             <span>|</span>
-            <span>Datenschutz</span>
+            <Link to="/datenschutz" className="hover:text-primary transition-colors">Datenschutz</Link>
           </div>
         </div>
       </footer>

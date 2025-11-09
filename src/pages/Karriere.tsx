@@ -163,10 +163,10 @@ const Karriere = () => {
                 <Input
                   value={content.title}
                   onChange={(e) => setContent({ ...content, title: e.target.value })}
-                  className="text-4xl md:text-5xl font-bold text-center bg-transparent border-none focus-visible:ring-0 p-0"
+                  className="text-2xl md:text-5xl font-bold text-center bg-transparent border-none focus-visible:ring-0 p-0"
                 />
               ) : (
-                <h1 className="text-4xl md:text-5xl font-bold text-center bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                <h1 className="text-2xl md:text-5xl font-bold text-center bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
                   {content.title}
                 </h1>
               )}
@@ -431,9 +431,9 @@ const Karriere = () => {
       <footer className="bg-card border-t border-border py-8 px-4 mt-12">
         <div className="container mx-auto text-center">
           <div className="flex justify-center gap-6 text-sm text-muted-foreground">
-            <span>Impressum</span>
+            <Link to="/impressum" className="hover:text-primary transition-colors">Impressum</Link>
             <span>|</span>
-            <span>Datenschutz</span>
+            <Link to="/datenschutz" className="hover:text-primary transition-colors">Datenschutz</Link>
           </div>
         </div>
       </footer>
