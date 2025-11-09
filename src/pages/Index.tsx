@@ -50,8 +50,6 @@ import bar2 from "@/assets/bar-new-2.webp";
 import bar3 from "@/assets/bar-new-3.webp";
 import bar4 from "@/assets/bar-new-4.webp";
 import automaten1 from "@/assets/automaten-new-1.webp";
-import automaten2 from "@/assets/automaten-new-2.webp";
-import automaten3 from "@/assets/automaten-new-3.webp";
 import automaten4 from "@/assets/automaten-new-4.webp";
 import oktayPhoto from "@/assets/oktay-kahyalar.jpg";
 import basementBarLogo from "@/assets/basement-bar-logo.webp";
@@ -1279,11 +1277,9 @@ const Index = () => {
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <img src={automaten1} alt="O.K Automaten Interior 1" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
-                  <img src={automaten2} alt="O.K Automaten Interior 2" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
-                  <img src={automaten3} alt="O.K Automaten Interior 3" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
-                  <img src={automaten4} alt="O.K Automaten Interior 4" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
+                  <img src={automaten4} alt="O.K Automaten Interior 2" className="w-full h-32 md:h-48 object-cover rounded-lg shadow-md hover:scale-105 transition-transform" loading="lazy" decoding="async" />
                 </div>
               </div>
             </AccordionContent>
